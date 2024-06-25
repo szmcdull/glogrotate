@@ -15,6 +15,7 @@ type (
 
 		l      sync.Mutex
 		writer *bufio.Writer
+		file   *os.File
 		RotateArgs
 	}
 )
@@ -64,6 +65,7 @@ func NewBufioSize(options Options, bufSize int, rotateChecker RotateChecker) (*B
 }
 
 func (me *BufioWriter) open() error {
+	me.close()
 	err := EnsureLink(me.Options.Path, me.RotateArgs.RealName)
 	if err != nil {
 		return err
@@ -88,6 +90,7 @@ func (me *BufioWriter) open() error {
 	// 	return fmt.Errorf("failed to parse path %s: %w", me.Path, err)
 	// }
 
+	me.file = file
 	me.writer = bufio.NewWriterSize(file, me.bufSize)
 	return nil
 }
@@ -129,4 +132,15 @@ func (me *BufioWriter) Flush() error {
 	defer me.l.Unlock()
 
 	return me.writer.Flush()
+}
+
+func (me *BufioWriter) close() {
+	me.file.Close()
+}
+
+func (me *BufioWriter) Close() {
+	me.l.Lock()
+	defer me.l.Unlock()
+
+	me.close()
 }

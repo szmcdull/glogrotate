@@ -15,9 +15,9 @@ import (
 		NewBufio				- create new bufio writer
 			GetLatestFile		- get latest real log file and index
 				PathParser		- parse real log file name to extract index
-				PathFormatter	- combine logFile and index to create real log file name
-		open					- open symlink logFile, read file info (size, time, realName etc.)
-			EnsureLink			- create symlink if it does not exist or points to wrong file
+				PathFormatter	- combine logFile and index to create real log file name. Default format is logFile.YYYYMMDD.index
+			open				- open symlink logFile, read file info (size, time, realName etc.)
+				EnsureLink		- create symlink if it does not exist or points to wrong file
 		RotateChecker			- check if log file needs to be rotated. If it does, it must update index
 		Rotator					- create real log file and symlink it to logFile
 
