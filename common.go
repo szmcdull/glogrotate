@@ -1,12 +1,9 @@
 package glogrotate
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -17,9 +14,9 @@ import (
 				PathParser		- parse real log file name to extract index
 				PathFormatter	- combine logFile and index to create real log file name. Default format is logFile.YYYYMMDD.index
 			open				- open symlink logFile, read file info (size, time, realName etc.)
-				EnsureLink		- create symlink if it does not exist or points to wrong file
+				Opener			- create symlink if it does not exist or points to wrong file
 		RotateChecker			- check if log file needs to be rotated. If it does, it must update index
-		Rotator					- create real log file and symlink it to logFile
+		Rotator					- create real log file and symlink it to logFile. Rotator is coupled with Opener. If you customize one, you must also customize the other
 
 */
 
@@ -37,64 +34,25 @@ type (
 	// 	Rotated bool
 	// }
 
-	RotateChecker func(*RotateArgs) (needRotate bool, err error)
 	PathFormatter func(logFile string, index int) string
 	PathParser    func(logFile, path string) (logIndex int, err error)
+	Opener        func(logFile, realFile string) (*os.File, error)
 	Rotator       func(newFile, logFile string) error
+	RotateChecker func(args *RotateArgs) (needRotate bool, err error)
+	Limiter       func(args RotateArgs) (oldFiles []string, err error)
+	Cleaner       func(args RotateArgs, oldFiles []string) error
 
 	Options struct {
 		Path          string
 		PathFormatter PathFormatter
 		PathParser    PathParser
+		Opener        Opener
 		Rotator       Rotator
+		RotateChecker RotateChecker
+		Limiter       Limiter
+		Cleaner       Cleaner
 	}
 )
-
-func DefaultPathFormatter(logFile string, index int) string {
-	result := logFile + "." + time.Now().Format("20060102")
-	if index > 0 {
-		result += "." + strconv.Itoa(index)
-	}
-	return result
-}
-
-func DefaultPathParser(logFile, path string) (logIndex int, err error) {
-	remaining := strings.TrimPrefix(path, logFile)
-	if len(remaining) == len(path) {
-		return 0, errors.New(`path does not start with logFile`)
-	}
-	if len(remaining) == 0 || remaining[0] != '.' {
-		return 0, errors.New(`invalid path format`)
-	}
-	remaining = remaining[1:]
-	tm := remaining[:8]
-	if _, err = time.Parse(`20060102`, tm); err != nil {
-		return 0, errors.New(`invalid path format`)
-	}
-	remaining = remaining[8:]
-	if len(remaining) == 0 || remaining[0] != '.' {
-		return 0, errors.New(`invalid path format`)
-	}
-	remaining = remaining[1:]
-	logIndex, err = strconv.Atoi(remaining)
-	if err != nil {
-		return 0, errors.New(`invalid path format`)
-	}
-	return
-}
-
-// DefaultRotator create newFile and symlink it to logFile
-func DefaultRotator(newFile, logFile string) error {
-	os.Remove(logFile)
-	file, err := os.OpenFile(newFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return err
-	}
-	file.Close()
-
-	err = os.Symlink(newFile, logFile)
-	return err
-}
 
 func GetLatestFile(logPath string, pathParser PathParser, pathFormatter PathFormatter) (latestFile string, index int, err error) {
 	dir := filepath.Dir(logPath)
@@ -126,40 +84,7 @@ func GetLatestFile(logPath string, pathParser PathParser, pathFormatter PathForm
 	return
 }
 
-func EnsureLink(logFile, realFile string) error {
-	stat, err := os.Stat(logFile)
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf(`failed to stat '%s': %w`, logFile, err)
-		}
-	} else {
-		if stat.IsDir() {
-			return fmt.Errorf(`%s is a directory`, logFile)
-		}
-		linkDest, err := os.Readlink(logFile)
-		if err != nil {
-			return fmt.Errorf(`%s is not a symlink or permission denied`, logFile)
-		}
-		if linkDest == realFile {
-			return nil
-		}
-		if err = os.Remove(logFile); err != nil {
-			return fmt.Errorf(`failed to remove '%s': %w`, logFile, err)
-		}
-	}
-
-	f, err := os.OpenFile(realFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return fmt.Errorf(`failed to create '%s': %w`, realFile, err)
-	}
-	f.Close()
-	if err = os.Symlink(realFile, logFile); err != nil {
-		return fmt.Errorf(`failed to create symlink '%s' -> '%s': %w`, logFile, realFile, err)
-	}
-	return nil
-}
-
-func checkRotate(checker RotateChecker, args *RotateArgs, rotator Rotator) (rotated bool, err error) {
+func checkRotate(checker RotateChecker, args *RotateArgs, rotator Rotator, limiter Limiter, cleaner Cleaner) (rotated bool, err error) {
 	needRotate, err := checker(args)
 	if err != nil {
 		return
@@ -171,7 +96,44 @@ func checkRotate(checker RotateChecker, args *RotateArgs, rotator Rotator) (rota
 			needRotate = false
 			return
 		}
+		// cleanup old files in a separate goroutine
+		go func() {
+			oldFiles, err := limiter(*args)
+			if err != nil {
+				println(`limiter: `, err.Error()) // todo: provide an option to specify the logger?
+				return
+			}
+			err = cleaner(*args, oldFiles)
+			if err != nil {
+				println(`cleaner: `, err.Error())
+				return
+			}
+		}()
 		return true, nil
 	}
 	return
+}
+
+func DefaultOptions(options *Options) {
+	if options.PathFormatter == nil {
+		options.PathFormatter = DefaultPathFormatter
+	}
+	if options.PathParser == nil {
+		options.PathParser = DefaultPathParser
+	}
+	if options.Opener == nil {
+		options.Opener = DefaultOpener
+	}
+	if options.Rotator == nil {
+		options.Rotator = DefaultRotator
+	}
+	if options.RotateChecker == nil {
+		options.RotateChecker = DefaultChecker
+	}
+	if options.Limiter == nil {
+		options.Limiter = NilLimiter
+	}
+	if options.Cleaner == nil {
+		options.Cleaner = NewCleanerRemove() // would remove nothing if use default NilLimiter
+	}
 }

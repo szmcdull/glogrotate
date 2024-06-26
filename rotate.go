@@ -1,8 +1,63 @@
 package glogrotate
 
 import (
+	"errors"
+	"fmt"
+	"os"
 	"time"
 )
+
+// DefaultOpener create logFile symlink to realFile and open it
+func DefaultOpener(logFile, realFile string) (file *os.File, err error) {
+	stat, err := os.Stat(logFile)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf(`failed to stat '%s': %w`, logFile, err)
+		}
+	} else {
+		if stat.IsDir() {
+			return nil, fmt.Errorf(`%s is a directory`, logFile)
+		}
+		linkDest, err2 := os.Readlink(logFile)
+		if err2 != nil {
+			return nil, fmt.Errorf(`%s is not a symlink or permission denied`, logFile)
+		}
+		if linkDest == realFile {
+			return os.OpenFile(realFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		}
+		if err = os.Remove(logFile); err != nil {
+			return nil, fmt.Errorf(`failed to remove '%s': %w`, logFile, err)
+		}
+	}
+
+	file, err = os.OpenFile(realFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, fmt.Errorf(`failed to create '%s': %w`, realFile, err)
+	}
+	if err = os.Symlink(realFile, logFile); err != nil {
+		file.Close()
+		return nil, fmt.Errorf(`failed to create symlink '%s' -> '%s': %w`, logFile, realFile, err)
+	}
+
+	return
+}
+
+// DefaultRotator create newFile and symlink it to logFile
+func DefaultRotator(newFile, logFile string) error {
+	os.Remove(logFile)
+	file, err := os.OpenFile(newFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return err
+	}
+	file.Close()
+
+	err = os.Symlink(newFile, logFile)
+	return err
+}
+
+func DefaultChecker(args *RotateArgs) (needRotate bool, err error) {
+	return false, nil
+}
 
 func NewRotateDaily() RotateChecker {
 	nextRotateTime := int64(0)

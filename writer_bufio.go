@@ -10,48 +10,38 @@ import (
 
 type (
 	BufioWriter struct {
-		bufSize       int
-		rotateHandler RotateChecker
+		bufSize int
 
 		l      sync.Mutex
 		writer *bufio.Writer
 		file   *os.File
-		RotateArgs
+		args   RotateArgs
 	}
 )
 
 // NewBufio creates a new bufio writer with default buffer size - 4096 at the time of release
-func NewBufio(options Options, handler RotateChecker) (*BufioWriter, error) {
-	return NewBufioSize(options, 0, handler)
+func NewBufio(options Options) (*BufioWriter, error) {
+	return NewBufioSize(options, 0)
 }
 
-func NewBufioSize(options Options, bufSize int, rotateChecker RotateChecker) (*BufioWriter, error) {
-	if options.PathFormatter == nil {
-		options.PathFormatter = DefaultPathFormatter
-	}
-	if options.PathParser == nil {
-		options.PathParser = DefaultPathParser
-	}
-	if options.Rotator == nil {
-		options.Rotator = DefaultRotator
-	}
+func NewBufioSize(options Options, bufSize int) (*BufioWriter, error) {
+	DefaultOptions(&options)
 
 	result := &BufioWriter{
-		RotateArgs: RotateArgs{
+		args: RotateArgs{
 			Options: options,
 		},
-		rotateHandler: rotateChecker,
-		bufSize:       bufSize,
+		bufSize: bufSize,
 	}
 
 	realFile, index, err := GetLatestFile(options.Path, options.PathParser, options.PathFormatter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get latest log file of %s: %w", options.Path, err)
 	}
-	result.Index = index
-	result.RealName = realFile
+	result.args.Index = index
+	result.args.RealName = realFile
 
-	_, err = checkRotate(rotateChecker, &result.RotateArgs, result.Rotator)
+	_, err = checkRotate(options.RotateChecker, &result.args, result.args.Rotator, result.args.Limiter, result.args.Cleaner)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check rotation: %w", err)
 	}
@@ -66,20 +56,21 @@ func NewBufioSize(options Options, bufSize int, rotateChecker RotateChecker) (*B
 
 func (me *BufioWriter) open() error {
 	me.close()
-	err := EnsureLink(me.Options.Path, me.RotateArgs.RealName)
+	file, err := me.args.Opener(me.args.Options.Path, me.args.RealName)
 	if err != nil {
 		return err
 	}
-	file, err := os.OpenFile(me.Path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open file %s: %w", me.Path, err)
-	}
+	// file, err := os.OpenFile(me.Path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to open file %s: %w", me.Path, err)
+	// }
 	stat, err := file.Stat()
 	if err != nil {
-		return fmt.Errorf("failed to state %s: %w", me.Path, err)
+		file.Close()
+		return fmt.Errorf("failed to state %s: %w", me.args.Path, err)
 	}
-	me.RotateArgs.FileSize = stat.Size()
-	me.RotateArgs.FileTime = stat.ModTime()
+	me.args.FileSize = stat.Size()
+	me.args.FileTime = stat.ModTime()
 
 	// realPath, err := os.Readlink(me.Path)
 	// if err != nil {
@@ -96,7 +87,7 @@ func (me *BufioWriter) open() error {
 }
 
 func (me *BufioWriter) checkRotate() error {
-	rotated, err := checkRotate(me.rotateHandler, &me.RotateArgs, me.Rotator)
+	rotated, err := checkRotate(me.args.RotateChecker, &me.args, me.args.Rotator, me.args.Limiter, me.args.Cleaner)
 	if err != nil {
 		return fmt.Errorf("failed to check rotate: %w", err)
 	}
@@ -113,7 +104,7 @@ func (me *BufioWriter) Write(p []byte) (n int, err error) {
 	me.l.Lock()
 	defer me.l.Unlock()
 
-	me.RotateArgs.AppendSize = len(p)
+	me.args.AppendSize = len(p)
 	err = me.checkRotate()
 	if err != nil {
 		return 0, err
@@ -121,8 +112,8 @@ func (me *BufioWriter) Write(p []byte) (n int, err error) {
 
 	n, err = me.writer.Write(p)
 	if err == nil {
-		me.RotateArgs.FileSize += int64(n)
-		me.FileTime = time.Now()
+		me.args.FileSize += int64(n)
+		me.args.FileTime = time.Now()
 	}
 	return
 }
