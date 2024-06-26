@@ -150,7 +150,6 @@ func (me *BufioWriter) Flush() error {
 
 func (me *BufioWriter) close() {
 	me.file.Close()
-	SafeCloseChan(me.exit)
 }
 
 func (me *BufioWriter) Close() {
@@ -158,4 +157,5 @@ func (me *BufioWriter) Close() {
 	defer me.l.Unlock()
 
 	me.close()
+	SafeCloseChan(me.exit)
 }
