@@ -136,4 +136,9 @@ func DefaultOptions(options *Options) {
 	if options.Cleaner == nil {
 		options.Cleaner = NewCleanerRemove() // would remove nothing if use default NilLimiter
 	}
+
+	absPath, err := filepath.Abs(options.Path)
+	if err == nil {
+		options.Path = absPath
+	}
 }
