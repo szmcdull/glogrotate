@@ -100,12 +100,12 @@ func checkRotate(checker RotateChecker, args *RotateArgs, rotator Rotator, limit
 		go func() {
 			oldFiles, err := limiter(*args)
 			if err != nil {
-				println(`limiter: `, err.Error()) // todo: provide an option to specify the logger?
+				log(`limiter: `, err.Error()) // todo: provide an option to specify the logger?
 				return
 			}
 			err = cleaner(*args, oldFiles)
 			if err != nil {
-				println(`cleaner: `, err.Error())
+				log(`cleaner: `, err.Error())
 				return
 			}
 		}()
@@ -141,4 +141,17 @@ func DefaultOptions(options *Options) {
 	if err == nil {
 		options.Path = absPath
 	}
+}
+
+func SafeCloseChan[T any](ch chan<- T) {
+	defer func() {
+		recover()
+	}()
+	close(ch)
+}
+
+func log(args ...any) {
+	now := time.Now().String()
+	s := fmt.Sprint(args...)
+	println(now, s)
 }

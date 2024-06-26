@@ -11,6 +11,7 @@ import (
 type (
 	BufioWriter struct {
 		bufSize int
+		exit    chan struct{}
 
 		l      sync.Mutex
 		writer *bufio.Writer
@@ -32,6 +33,7 @@ func NewBufioSize(options Options, bufSize int) (*BufioWriter, error) {
 			Options: options,
 		},
 		bufSize: bufSize,
+		exit:    make(chan struct{}),
 	}
 
 	realFile, index, err := GetLatestFile(options.Path, options.PathParser, options.PathFormatter)
@@ -50,6 +52,27 @@ func NewBufioSize(options Options, bufSize int) (*BufioWriter, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				if result.writer.Size() > 0 {
+					result.l.Lock()
+					err := result.writer.Flush()
+					result.l.Unlock()
+					if err != nil {
+						log(err)
+					}
+				}
+			case <-result.exit:
+				return
+			}
+		}
+	}()
 
 	return result, nil
 }
@@ -127,6 +150,7 @@ func (me *BufioWriter) Flush() error {
 
 func (me *BufioWriter) close() {
 	me.file.Close()
+	SafeCloseChan(me.exit)
 }
 
 func (me *BufioWriter) Close() {
