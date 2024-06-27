@@ -36,22 +36,23 @@ func NewBufioSize(options Options, bufSize int) (*BufioWriter, error) {
 		exit:    make(chan struct{}),
 	}
 
-	realFile, index, err := GetLatestFile(options.Path, options.PathParser, options.PathFormatter)
+	realFile, _, index, err := GetLatestFile(options.Path, options.PathParser, options.PathFormatter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get latest log file of %s: %w", options.Path, err)
 	}
 	result.args.Index = index
 	result.args.RealName = realFile
 
-	_, err = checkRotate(options.RotateChecker, &result.args, result.args.Rotator, result.args.Limiter, result.args.Cleaner)
+	err = result.checkRotate(true)
+	// _, err = checkRotate(options.RotateChecker, &result.args, result.args.Rotator, result.args.Limiter, result.args.Cleaner)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check rotation: %w", err)
 	}
 
-	err = result.open()
-	if err != nil {
-		return nil, err
-	}
+	// err = result.open()
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	go func() {
 		ticker := time.NewTicker(1 * time.Second)
@@ -109,12 +110,14 @@ func (me *BufioWriter) open() error {
 	return nil
 }
 
-func (me *BufioWriter) checkRotate() error {
-	rotated, err := checkRotate(me.args.RotateChecker, &me.args, me.args.Rotator, me.args.Limiter, me.args.Cleaner)
+// checkRotate checks if the log file needs to be rotated. If it does, it will rotate the log file.
+// new is true if the writer is being created.
+func (me *BufioWriter) checkRotate(new bool) error {
+	rotated, err := checkRotate(me.args.RotateChecker, &me.args, me.args.Rotator, me.args.Limiter, me.args.Cleaner, new)
 	if err != nil {
 		return fmt.Errorf("failed to check rotate: %w", err)
 	}
-	if rotated {
+	if rotated || new {
 		err = me.open()
 		if err != nil {
 			return fmt.Errorf("failed to re-open log file: %w", err)
@@ -128,7 +131,7 @@ func (me *BufioWriter) Write(p []byte) (n int, err error) {
 	defer me.l.Unlock()
 
 	me.args.AppendSize = len(p)
-	err = me.checkRotate()
+	err = me.checkRotate(false)
 	if err != nil {
 		return 0, err
 	}

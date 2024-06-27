@@ -4,54 +4,77 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 )
 
-// DefaultOpener create logFile symlink to realFile and open it
+// DefaultOpener open realFile
 func DefaultOpener(logFile, realFile string) (file *os.File, err error) {
-	stat, err := os.Stat(logFile)
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf(`failed to stat '%s': %w`, logFile, err)
-		}
-	} else {
-		if stat.IsDir() {
-			return nil, fmt.Errorf(`%s is a directory`, logFile)
-		}
-		linkDest, err2 := os.Readlink(logFile)
-		if err2 != nil {
-			return nil, fmt.Errorf(`%s is not a symlink or permission denied`, logFile)
-		}
-		if linkDest == realFile {
-			return os.OpenFile(realFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		}
-		if err = os.Remove(logFile); err != nil {
-			return nil, fmt.Errorf(`failed to remove '%s': %w`, logFile, err)
-		}
-	}
+	// stat, err := os.Stat(logFile)
+	// if err != nil {
+	// 	if !errors.Is(err, os.ErrNotExist) {
+	// 		return nil, fmt.Errorf(`failed to stat '%s': %w`, logFile, err)
+	// 	}
+	// } else {
+	// 	if stat.IsDir() {
+	// 		return nil, fmt.Errorf(`%s is a directory`, logFile)
+	// 	}
+	// 	linkDest, err2 := os.Readlink(logFile)
+	// 	if err2 != nil {
+	// 		return nil, fmt.Errorf(`%s is not a symlink or permission denied`, logFile)
+	// 	}
+	// 	if linkDest == realFile || linkDest == filepath.Base(realFile) {
+	// 		return os.OpenFile(realFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	// 	}
+	// 	if err = os.Remove(logFile); err != nil {
+	// 		return nil, fmt.Errorf(`failed to remove '%s': %w`, logFile, err)
+	// 	}
+	// }
 
 	file, err = os.OpenFile(realFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
-		return nil, fmt.Errorf(`failed to create '%s': %w`, realFile, err)
+		return nil, fmt.Errorf(`open '%s': %w`, realFile, err)
 	}
-	if err = os.Symlink(realFile, logFile); err != nil {
-		file.Close()
-		return nil, fmt.Errorf(`failed to create symlink '%s' -> '%s': %w`, logFile, realFile, err)
-	}
+	// if err = os.Symlink(filepath.Base(realFile), logFile); err != nil {
+	// 	file.Close()
+	// 	return nil, fmt.Errorf(`failed to create symlink '%s' -> '%s': %w`, logFile, realFile, err)
+	// }
 
 	return
 }
 
 // DefaultRotator create newFile and symlink it to logFile
 func DefaultRotator(newFile, logFile string) error {
-	os.Remove(logFile)
+	// check if logFile is a symlink. if logFile is a symlink but not point to newFile, remove the link
+	stat, err := os.Stat(logFile)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf(`rotate: Stat '%s': %w`, logFile, err)
+		}
+	} else {
+		if stat.IsDir() {
+			return fmt.Errorf(`rotate: %s is a directory`, logFile)
+		}
+		linkDest, err2 := os.Readlink(logFile)
+		if err2 != nil {
+			return fmt.Errorf(`rotate: ReadLink %s: %w`, logFile, err2)
+		}
+		if linkDest == newFile || linkDest == filepath.Base(newFile) {
+			return nil
+		}
+		if err = os.Remove(logFile); err != nil {
+			return fmt.Errorf(`rotate: failed to remove '%s': %w`, logFile, err)
+		}
+	}
+
+	// create newFile and symlink it to logFile
 	file, err := os.OpenFile(newFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return err
 	}
 	file.Close()
 
-	err = os.Symlink(newFile, logFile)
+	err = os.Symlink(filepath.Base(newFile), logFile)
 	return err
 }
 

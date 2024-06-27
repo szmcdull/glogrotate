@@ -35,7 +35,7 @@ type (
 	// }
 
 	PathFormatter func(logFile string, index int) string
-	PathParser    func(logFile, path string) (logIndex int, err error)
+	PathParser    func(logFile, path string) (logTime time.Time, logIndex int, err error)
 	Opener        func(logFile, realFile string) (*os.File, error)
 	Rotator       func(newFile, logFile string) error
 	RotateChecker func(args *RotateArgs) (needRotate bool, err error)
@@ -54,24 +54,27 @@ type (
 	}
 )
 
-func GetLatestFile(logPath string, pathParser PathParser, pathFormatter PathFormatter) (latestFile string, index int, err error) {
+func GetLatestFile(logPath string, pathParser PathParser, pathFormatter PathFormatter) (latestFile string, logTime time.Time, index int, err error) {
 	dir := filepath.Dir(logPath)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return ``, 0, fmt.Errorf(`failed to read dir %s: %w`, dir, err)
+		err = fmt.Errorf(`failed to read dir %s: %w`, dir, err)
+		return
 	}
 
 	index = -1
+	base := filepath.Base(logPath)
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
-		logIndex, err := pathParser(logPath, entry.Name())
+		logTime2, logIndex2, err := pathParser(base, entry.Name())
 		if err != nil {
 			continue
 		}
-		if logIndex > index {
-			index = logIndex
+		if logTime2.After(logTime) || logTime2.Equal(logTime) && logIndex2 > index {
+			logTime = logTime2
+			index = logIndex2
 			latestFile = entry.Name()
 		}
 	}
@@ -79,15 +82,24 @@ func GetLatestFile(logPath string, pathParser PathParser, pathFormatter PathForm
 	if index == -1 {
 		index = 0
 		latestFile = pathFormatter(logPath, index)
+	} else {
+		latestFile = filepath.Join(dir, latestFile)
 	}
 
 	return
 }
 
-func checkRotate(checker RotateChecker, args *RotateArgs, rotator Rotator, limiter Limiter, cleaner Cleaner) (rotated bool, err error) {
+func checkRotate(checker RotateChecker, args *RotateArgs, rotator Rotator, limiter Limiter, cleaner Cleaner, new bool) (rotated bool, err error) {
 	needRotate, err := checker(args)
 	if err != nil {
 		return
+	}
+	if !needRotate && new {
+		if _, err = os.Stat(args.RealName); err != nil {
+			needRotate = true
+		} else if _, err = os.Stat(args.Path); err != nil {
+			needRotate = true
+		}
 	}
 	if needRotate {
 		args.RealName = args.PathFormatter(args.Path, args.Index)
@@ -97,21 +109,25 @@ func checkRotate(checker RotateChecker, args *RotateArgs, rotator Rotator, limit
 			return
 		}
 		// cleanup old files in a separate goroutine
-		go func() {
-			oldFiles, err := limiter(*args)
-			if err != nil {
-				log(`limiter: `, err.Error()) // todo: provide an option to specify the logger?
-				return
-			}
-			err = cleaner(*args, oldFiles)
-			if err != nil {
-				log(`cleaner: `, err.Error())
-				return
-			}
-		}()
+		go clean(*args, limiter, cleaner)
 		return true, nil
+	} else if new {
+		go clean(*args, limiter, cleaner)
 	}
 	return
+}
+
+func clean(args RotateArgs, limiter Limiter, cleaner Cleaner) {
+	oldFiles, err := limiter(args)
+	if err != nil {
+		log(`limiter: `, err.Error()) // todo: provide an option to specify the logger?
+		return
+	}
+	err = cleaner(args, oldFiles)
+	if err != nil {
+		log(`cleaner: `, err.Error())
+		return
+	}
 }
 
 func DefaultOptions(options *Options) {

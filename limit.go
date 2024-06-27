@@ -20,8 +20,9 @@ func NewLimiterDuration(duration time.Duration) Limiter {
 		}
 
 		oldestTime := time.Now().Add(-duration)
+		base := filepath.Base(args.Path)
 		for _, entry := range entries {
-			_, err2 := args.PathParser(args.Path, entry.Name()) // check if the file is a log file
+			_, _, err2 := args.PathParser(base, entry.Name()) // check if the file is a log file
 			if err2 != nil {
 				continue
 			}
