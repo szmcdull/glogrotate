@@ -23,7 +23,7 @@ func DefaultPathParser(logFile, path string) (logTime time.Time, logIndex int, e
 		err = errors.New(`path does not start with logFile`)
 		return
 	}
-	if len(remaining) == 0 || remaining[0] != '.' {
+	if len(remaining) == 0 || remaining[0] != '.' || len(remaining) < 9 {
 		err = errors.New(`invalid path format`)
 		return
 	}
