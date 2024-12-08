@@ -9,14 +9,19 @@ import (
 )
 
 type (
-	BufioWriter struct {
+	// writer without lock, for async logger that writes from a dedicated go-proc
+	BufioWriterNoLock struct {
 		bufSize int
 		exit    chan struct{}
 
-		l      sync.Mutex
 		writer *bufio.Writer
 		file   *os.File
 		args   RotateArgs
+	}
+
+	BufioWriter struct {
+		BufioWriterNoLock
+		l sync.Mutex
 	}
 )
 
@@ -29,11 +34,13 @@ func NewBufioSize(options Options, bufSize int) (*BufioWriter, error) {
 	DefaultOptions(&options)
 
 	result := &BufioWriter{
-		args: RotateArgs{
-			Options: options,
+		BufioWriterNoLock: BufioWriterNoLock{
+			args: RotateArgs{
+				Options: options,
+			},
+			bufSize: bufSize,
+			exit:    make(chan struct{}),
 		},
-		bufSize: bufSize,
-		exit:    make(chan struct{}),
 	}
 
 	realFile, _, index, err := GetLatestFile(options.Path, options.PathParser, options.PathFormatter)
@@ -78,7 +85,65 @@ func NewBufioSize(options Options, bufSize int) (*BufioWriter, error) {
 	return result, nil
 }
 
-func (me *BufioWriter) open() error {
+// NewBufio creates a new bufio writer with default buffer size - 4096 at the time of release
+func NewBufioNoLock(options Options) (*BufioWriterNoLock, error) {
+	return NewBufioNoLockSize(options, 0)
+}
+
+func NewBufioNoLockSize(options Options, bufSize int) (*BufioWriterNoLock, error) {
+	DefaultOptions(&options)
+
+	result := &BufioWriterNoLock{
+		args: RotateArgs{
+			Options: options,
+		},
+		bufSize: bufSize,
+		exit:    make(chan struct{}),
+	}
+
+	realFile, _, index, err := GetLatestFile(options.Path, options.PathParser, options.PathFormatter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get latest log file of %s: %w", options.Path, err)
+	}
+	result.args.Index = index
+	result.args.RealName = realFile
+
+	err = result.checkRotate(true)
+	// _, err = checkRotate(options.RotateChecker, &result.args, result.args.Rotator, result.args.Limiter, result.args.Cleaner)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check rotation: %w", err)
+	}
+
+	// err = result.open()
+	// if err != nil {
+	// 	return nil, err
+	// }
+
+	// go func() {
+	// 	ticker := time.NewTicker(1 * time.Second)
+	// 	defer ticker.Stop()
+
+	// 	for {
+	// 		select {
+	// 		case <-ticker.C:
+	// 			if result.writer.Size() > 0 {
+	// 				result.l.Lock()
+	// 				err := result.writer.Flush()
+	// 				result.l.Unlock()
+	// 				if err != nil {
+	// 					log(err)
+	// 				}
+	// 			}
+	// 		case <-result.exit:
+	// 			return
+	// 		}
+	// 	}
+	// }()
+
+	return result, nil
+}
+
+func (me *BufioWriterNoLock) open() error {
 	me.close()
 	file, err := me.args.Opener(me.args.Options.Path, me.args.RealName)
 	if err != nil {
@@ -112,7 +177,7 @@ func (me *BufioWriter) open() error {
 
 // checkRotate checks if the log file needs to be rotated. If it does, it will rotate the log file.
 // new is true if the writer is being created.
-func (me *BufioWriter) checkRotate(new bool) error {
+func (me *BufioWriterNoLock) checkRotate(new bool) error {
 	rotated, err := checkRotate(me.args.RotateChecker, &me.args, me.args.Rotator, me.args.Limiter, me.args.Cleaner, new)
 	if err != nil {
 		return fmt.Errorf("failed to check rotate: %w", err)
@@ -126,10 +191,7 @@ func (me *BufioWriter) checkRotate(new bool) error {
 	return nil
 }
 
-func (me *BufioWriter) Write(p []byte) (n int, err error) {
-	me.l.Lock()
-	defer me.l.Unlock()
-
+func (me *BufioWriterNoLock) Write(p []byte) (n int, err error) {
 	me.args.AppendSize = len(p)
 	err = me.checkRotate(false)
 	if err != nil {
@@ -144,21 +206,33 @@ func (me *BufioWriter) Write(p []byte) (n int, err error) {
 	return
 }
 
-func (me *BufioWriter) Flush() error {
+func (me *BufioWriter) Write(p []byte) (n int, err error) {
 	me.l.Lock()
 	defer me.l.Unlock()
+	return me.BufioWriterNoLock.Write(p)
+}
 
+func (me *BufioWriterNoLock) Flush() error {
 	return me.writer.Flush()
 }
 
-func (me *BufioWriter) close() {
+func (me *BufioWriter) Flush() error {
+	me.l.Lock()
+	defer me.l.Unlock()
+	return me.BufioWriterNoLock.Flush()
+}
+
+func (me *BufioWriterNoLock) close() {
 	me.file.Close()
+}
+
+func (me *BufioWriterNoLock) Close() {
+	me.close()
+	SafeCloseChan(me.exit)
 }
 
 func (me *BufioWriter) Close() {
 	me.l.Lock()
 	defer me.l.Unlock()
-
-	me.close()
-	SafeCloseChan(me.exit)
+	me.BufioWriterNoLock.Close()
 }
