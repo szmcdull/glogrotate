@@ -31,7 +31,7 @@ func DefaultOpener(logFile, realFile string) (file *os.File, err error) {
 	// 	}
 	// }
 
-	file, err = os.OpenFile(realFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	file, err = os.OpenFile(realFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0664)
 	if err != nil {
 		return nil, fmt.Errorf(`open '%s': %w`, realFile, err)
 	}
@@ -68,7 +68,7 @@ func DefaultRotator(newFile, logFile string) error {
 	}
 
 	// create newFile and symlink it to logFile
-	file, err := os.OpenFile(newFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	file, err := os.OpenFile(newFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0664)
 	if err != nil {
 		return err
 	}
