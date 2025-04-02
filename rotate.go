@@ -76,7 +76,7 @@ func DefaultRotator(newFile, logFile string) error {
 
 	err = os.Symlink(filepath.Base(newFile), logFile)
 	if err != nil {
-		log(`failed to create symlink`, newFile)
+		log(fmt.Sprintf(`failed to create symlink '%s': %s`, newFile, err.Error()))
 	}
 	return nil
 }
