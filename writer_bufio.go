@@ -227,6 +227,7 @@ func (me *BufioWriterNoLock) close() {
 }
 
 func (me *BufioWriterNoLock) Close() {
+	me.Flush()
 	me.close()
 	SafeCloseChan(me.exit)
 }
