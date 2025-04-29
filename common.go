@@ -95,11 +95,15 @@ func checkRotate(checker RotateChecker, args *RotateArgs, rotator Rotator, limit
 		return
 	}
 	if !needRotate && new {
-		if _, err = os.Stat(args.RealName); err != nil {
-			needRotate = true
-		} else if _, err = os.Stat(args.Path); err != nil {
-			needRotate = true
+		err = rotator(args.Path, args.RealName)
+		if err != nil {
+			return
 		}
+		// if _, err = os.Stat(args.RealName); err != nil {
+		// 	needRotate = true
+		// } else if _, err = os.Stat(args.Path); err != nil { // todo: check if Path exists but is not a symlink to RealName
+		// 	needRotate = true
+		// }
 	}
 	if needRotate {
 		args.RealName = args.PathFormatter(args.Path, args.Index)
