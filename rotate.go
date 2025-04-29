@@ -46,14 +46,14 @@ func DefaultOpener(logFile, realFile string) (file *os.File, err error) {
 // DefaultRotator create newFile and symlink it to logFile
 func DefaultRotator(newFile, logFile string) error {
 	// check if logFile is a symlink. if logFile is a symlink but not point to newFile, remove the link
-	stat, err := os.Stat(logFile)
+	stat, err := os.Lstat(logFile)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf(`rotate: Stat '%s': %w`, logFile, err)
 		}
 	} else {
-		if stat.IsDir() {
-			return fmt.Errorf(`rotate: %s is a directory`, logFile)
+		if stat.Mode()&os.ModeSymlink == 0 {
+			return fmt.Errorf(`rotate: %s is not a symlink, please rename or remove it`, logFile)
 		}
 		linkDest, err2 := os.Readlink(logFile)
 		if err2 != nil {
