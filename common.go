@@ -95,7 +95,7 @@ func checkRotate(checker RotateChecker, args *RotateArgs, rotator Rotator, limit
 		return
 	}
 	if !needRotate && new {
-		err = rotator(args.Path, args.RealName)
+		err = rotator(args.RealName, args.Path)
 		if err != nil {
 			return
 		}
